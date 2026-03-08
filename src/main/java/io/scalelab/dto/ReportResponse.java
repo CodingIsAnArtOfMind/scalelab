@@ -2,10 +2,11 @@ package io.scalelab.dto;
 
 import lombok.Data;
 
+import java.io.Serializable;
 import java.time.LocalDateTime;
 
 @Data
-public class ReportResponse {
+public class ReportResponse implements Serializable {
 
     private Long id;
     private Long userId;

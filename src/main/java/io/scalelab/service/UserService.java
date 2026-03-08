@@ -6,6 +6,8 @@ import io.scalelab.entity.User;
 import io.scalelab.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,6 +20,7 @@ public class UserService {
 
     private final UserRepository userRepository;
 
+    @CacheEvict(value = "users", allEntries = true)
     public UserResponse createUser(CreateUserRequest request) {
         long start = System.currentTimeMillis();
         log.info("Creating user with email: {}", request.getEmail());
@@ -32,6 +35,7 @@ public class UserService {
         return mapToResponse(saved);
     }
 
+    @Cacheable(value = "users", key = "'all'")
     public List<UserResponse> getAllUsers() {
         long start = System.currentTimeMillis();
         log.info("Fetching all users");
@@ -41,6 +45,7 @@ public class UserService {
         return users.stream().map(this::mapToResponse).collect(Collectors.toList());
     }
 
+    @Cacheable(value = "users", key = "#id")
     public UserResponse getUserById(Long id) {
         long start = System.currentTimeMillis();
         log.info("Fetching user by id: {}", id);

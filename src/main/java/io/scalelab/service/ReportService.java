@@ -9,6 +9,8 @@ import io.scalelab.repository.ReportRepository;
 import io.scalelab.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -22,6 +24,7 @@ public class ReportService {
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
 
+    @CacheEvict(value = "reports", key = "#userId")
     public ReportResponse generateReport(Long userId) {
         long start = System.currentTimeMillis();
         log.info("Generating report for user id: {}", userId);
@@ -52,6 +55,7 @@ public class ReportService {
         return mapToResponse(saved);
     }
 
+    @Cacheable(value = "reports", key = "#userId")
     public List<ReportResponse> getReportsByUserId(Long userId) {
         long start = System.currentTimeMillis();
         log.info("Fetching reports for user id: {}", userId);

@@ -2,6 +2,7 @@ package io.scalelab.controller;
 
 import io.scalelab.dto.CreateOrderRequest;
 import io.scalelab.dto.OrderResponse;
+import io.scalelab.dto.PagedResponse;
 import io.scalelab.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
 @RequestMapping("/orders")
@@ -25,59 +25,70 @@ public class OrderController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    @GetMapping("/{userId}")
-    public ResponseEntity<List<OrderResponse>> getOrdersByUserId(@PathVariable Long userId) {
-        return ResponseEntity.ok(orderService.getOrdersByUserId(userId));
-    }
-
     // =========================================================================
-    // BOTTLENECK APIs — for load testing experiments
-    // All queries below hit columns with NO indexes → full table scans
+    // Phase 3 — Paginated + Cached endpoints
+    // All list endpoints now accept ?page=0&size=20
+    // Default: page=0, size=20 (returns only 20 rows per page)
     // =========================================================================
 
     /**
-     * GET /orders/search?status=EXECUTED&from=2026-02-01T00:00:00
-     * Heaviest query — filters by status + date range + sorts
-     * No index on status or created_at → full table scan
+     * GET /orders/{userId}?page=0&size=20
+     */
+    @GetMapping("/{userId}")
+    public ResponseEntity<PagedResponse<OrderResponse>> getOrdersByUserId(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersByUserId(userId, page, Math.min(size, 100)));
+    }
+
+    /**
+     * GET /orders/search?status=EXECUTED&from=2026-02-01T00:00:00&page=0&size=20
      */
     @GetMapping("/search")
-    public ResponseEntity<List<OrderResponse>> searchOrders(
+    public ResponseEntity<PagedResponse<OrderResponse>> searchOrders(
             @RequestParam String status,
-            @RequestParam String from) {
+            @RequestParam String from,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
         LocalDateTime fromDate = LocalDateTime.parse(from);
-        return ResponseEntity.ok(orderService.searchOrders(status, fromDate));
+        return ResponseEntity.ok(orderService.searchOrders(status, fromDate, page, Math.min(size, 100)));
     }
 
     /**
-     * GET /orders/status/{status}
-     * Filters all orders by status — no index → full table scan
+     * GET /orders/status/{status}?page=0&size=20
      */
     @GetMapping("/status/{status}")
-    public ResponseEntity<List<OrderResponse>> getOrdersByStatus(@PathVariable String status) {
-        return ResponseEntity.ok(orderService.getOrdersByStatus(status));
+    public ResponseEntity<PagedResponse<OrderResponse>> getOrdersByStatus(
+            @PathVariable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersByStatus(status, page, Math.min(size, 100)));
     }
 
     /**
-     * GET /orders/user/{userId}/status/{status}
-     * Filters by user + status — no index on either → full table scan
+     * GET /orders/user/{userId}/status/{status}?page=0&size=20
      */
     @GetMapping("/user/{userId}/status/{status}")
-    public ResponseEntity<List<OrderResponse>> getOrdersByUserIdAndStatus(
+    public ResponseEntity<PagedResponse<OrderResponse>> getOrdersByUserIdAndStatus(
             @PathVariable Long userId,
-            @PathVariable String status) {
-        return ResponseEntity.ok(orderService.getOrdersByUserIdAndStatus(userId, status));
+            @PathVariable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersByUserIdAndStatus(userId, status, page, Math.min(size, 100)));
     }
 
     /**
-     * GET /orders/user/{userId}/recent?from=2026-02-01T00:00:00
-     * Filters by user + date range — no index → full table scan
+     * GET /orders/user/{userId}/recent?from=2026-02-01T00:00:00&page=0&size=20
      */
     @GetMapping("/user/{userId}/recent")
-    public ResponseEntity<List<OrderResponse>> getRecentOrdersByUser(
+    public ResponseEntity<PagedResponse<OrderResponse>> getRecentOrdersByUser(
             @PathVariable Long userId,
-            @RequestParam String from) {
+            @RequestParam String from,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
         LocalDateTime fromDate = LocalDateTime.parse(from);
-        return ResponseEntity.ok(orderService.searchOrdersByUserAndDate(userId, fromDate));
+        return ResponseEntity.ok(orderService.searchOrdersByUserAndDate(userId, fromDate, page, Math.min(size, 100)));
     }
 }
 
