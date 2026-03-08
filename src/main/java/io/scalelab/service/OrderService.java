@@ -2,6 +2,7 @@ package io.scalelab.service;
 
 import io.scalelab.dto.CreateOrderRequest;
 import io.scalelab.dto.OrderResponse;
+import io.scalelab.dto.PagedResponse;
 import io.scalelab.entity.Order;
 import io.scalelab.exception.ResourceNotFoundException;
 import io.scalelab.repository.AccountRepository;
@@ -9,6 +10,11 @@ import io.scalelab.repository.OrderRepository;
 import io.scalelab.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -24,16 +30,18 @@ public class OrderService {
     private final UserRepository userRepository;
     private final AccountRepository accountRepository;
 
+    /**
+     * Place order — evicts cached orders for this user since data changed
+     */
+    @CacheEvict(value = "orders", allEntries = true)
     public OrderResponse placeOrder(CreateOrderRequest request) {
         long start = System.currentTimeMillis();
         log.info("Placing order for user: {}, symbol: {}, type: {}",
                 request.getUserId(), request.getSymbol(), request.getOrderType());
 
-        // Verify user exists
         userRepository.findById(request.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.getUserId()));
 
-        // Verify account exists
         accountRepository.findById(request.getAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found with id: " + request.getAccountId()));
 
@@ -44,7 +52,7 @@ public class OrderService {
         order.setQuantity(request.getQuantity());
         order.setPrice(request.getPrice());
         order.setOrderType(request.getOrderType());
-        order.setStatus("PENDING"); // All orders start as PENDING — no async processing
+        order.setStatus("PENDING");
 
         Order saved = orderRepository.save(order);
         log.info("Order placed with id: {}, status: {} — took {} ms", saved.getId(), saved.getStatus(), System.currentTimeMillis() - start);
@@ -52,62 +60,115 @@ public class OrderService {
         return mapToResponse(saved);
     }
 
-    public List<OrderResponse> getOrdersByUserId(Long userId) {
+    // =========================================================================
+    // Phase 3 — Paginated + Cached endpoints
+    // =========================================================================
+
+    /**
+     * GET /orders/{userId}?page=0&size=20
+     * Paginated + cached. Returns only 20 orders per page instead of ALL.
+     */
+    @Cacheable(value = "orders", key = "'user:' + #userId + ':page:' + #page + ':size:' + #size")
+    public PagedResponse<OrderResponse> getOrdersByUserId(Long userId, int page, int size) {
         long start = System.currentTimeMillis();
-        log.info("Fetching orders for user id: {}", userId);
-        // Intentionally no index on user_id — will do full table scan
-        // Intentionally no pagination — returns ALL orders
-        List<Order> orders = orderRepository.findByUserId(userId);
-        log.info("Found {} orders for user: {} — took {} ms", orders.size(), userId, System.currentTimeMillis() - start);
-        return orders.stream().map(this::mapToResponse).collect(Collectors.toList());
+        log.info("Fetching orders for user: {} — page: {}, size: {}", userId, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Order> orderPage = orderRepository.findByUserId(userId, pageable);
+
+        PagedResponse<OrderResponse> response = toPagedResponse(orderPage);
+        log.info("Found {} orders (page {}/{}) for user: {} — took {} ms",
+                orderPage.getNumberOfElements(), page, orderPage.getTotalPages(), userId, System.currentTimeMillis() - start);
+        return response;
     }
 
     /**
-     * Search orders by status — no index on status → full table scan
-     * Sorted by created_at DESC — no index on created_at → in-memory sort
+     * GET /orders/status/{status}?page=0&size=20
+     * Previously returned ALL 60K+ EXECUTED orders. Now paginated to 20.
      */
-    public List<OrderResponse> getOrdersByStatus(String status) {
+    @Cacheable(value = "orders", key = "'status:' + #status + ':page:' + #page + ':size:' + #size")
+    public PagedResponse<OrderResponse> getOrdersByStatus(String status, int page, int size) {
         long start = System.currentTimeMillis();
-        log.info("Searching orders by status: {}", status);
-        List<Order> orders = orderRepository.findByStatusOrderByCreatedAtDesc(status);
-        log.info("Found {} orders with status: {} — took {} ms", orders.size(), status, System.currentTimeMillis() - start);
-        return orders.stream().map(this::mapToResponse).collect(Collectors.toList());
+        log.info("Searching orders by status: {} — page: {}, size: {}", status, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Order> orderPage = orderRepository.findByStatusOrderByCreatedAtDesc(status, pageable);
+
+        PagedResponse<OrderResponse> response = toPagedResponse(orderPage);
+        log.info("Found {} orders with status: {} (page {}/{}) — took {} ms",
+                orderPage.getNumberOfElements(), status, page, orderPage.getTotalPages(), System.currentTimeMillis() - start);
+        return response;
     }
 
     /**
-     * Search orders by user + status — no index on user_id or status → full table scan
+     * GET /orders/user/{userId}/status/{status}?page=0&size=20
      */
-    public List<OrderResponse> getOrdersByUserIdAndStatus(Long userId, String status) {
+    @Cacheable(value = "orders", key = "'user:' + #userId + ':status:' + #status + ':page:' + #page + ':size:' + #size")
+    public PagedResponse<OrderResponse> getOrdersByUserIdAndStatus(Long userId, String status, int page, int size) {
         long start = System.currentTimeMillis();
-        log.info("Searching orders for user: {} with status: {}", userId, status);
-        List<Order> orders = orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, status);
-        log.info("Found {} orders for user: {} with status: {} — took {} ms", orders.size(), userId, status, System.currentTimeMillis() - start);
-        return orders.stream().map(this::mapToResponse).collect(Collectors.toList());
+        log.info("Searching orders for user: {} with status: {} — page: {}, size: {}", userId, status, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Order> orderPage = orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, status, pageable);
+
+        PagedResponse<OrderResponse> response = toPagedResponse(orderPage);
+        log.info("Found {} orders for user: {} with status: {} (page {}/{}) — took {} ms",
+                orderPage.getNumberOfElements(), userId, status, page, orderPage.getTotalPages(), System.currentTimeMillis() - start);
+        return response;
     }
 
     /**
-     * Search orders by status + date range — HEAVIEST QUERY
-     * Scans entire table, filters by status AND created_at, sorts result
-     * No index on any of these columns → guaranteed full table scan
+     * GET /orders/search?status=EXECUTED&from=2026-02-01T00:00:00&page=0&size=20
+     * The heaviest query — now paginated. Returns 20 rows instead of 60K.
      */
-    public List<OrderResponse> searchOrders(String status, LocalDateTime from) {
+    @Cacheable(value = "orders", key = "'search:' + #status + ':from:' + #from + ':page:' + #page + ':size:' + #size")
+    public PagedResponse<OrderResponse> searchOrders(String status, LocalDateTime from, int page, int size) {
         long start = System.currentTimeMillis();
-        log.info("Searching orders — status: {}, from: {}", status, from);
-        List<Order> orders = orderRepository.searchByStatusAndDateRange(status, from);
-        log.info("Search found {} orders — took {} ms", orders.size(), System.currentTimeMillis() - start);
-        return orders.stream().map(this::mapToResponse).collect(Collectors.toList());
+        log.info("Searching orders — status: {}, from: {}, page: {}, size: {}", status, from, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Order> orderPage = orderRepository.searchByStatusAndDateRange(status, from, pageable);
+
+        PagedResponse<OrderResponse> response = toPagedResponse(orderPage);
+        log.info("Search found {} orders (page {}/{}) — took {} ms",
+                orderPage.getNumberOfElements(), page, orderPage.getTotalPages(), System.currentTimeMillis() - start);
+        return response;
     }
 
     /**
-     * Search orders by user + date range
-     * No index on user_id or created_at → full table scan
+     * GET /orders/user/{userId}/recent?from=2026-02-01T00:00:00&page=0&size=20
      */
-    public List<OrderResponse> searchOrdersByUserAndDate(Long userId, LocalDateTime from) {
+    @Cacheable(value = "orders", key = "'user:' + #userId + ':from:' + #from + ':page:' + #page + ':size:' + #size")
+    public PagedResponse<OrderResponse> searchOrdersByUserAndDate(Long userId, LocalDateTime from, int page, int size) {
         long start = System.currentTimeMillis();
-        log.info("Searching orders for user: {} from: {}", userId, from);
-        List<Order> orders = orderRepository.searchByUserIdAndDateRange(userId, from);
-        log.info("Found {} orders for user: {} from date — took {} ms", orders.size(), userId, System.currentTimeMillis() - start);
-        return orders.stream().map(this::mapToResponse).collect(Collectors.toList());
+        log.info("Searching orders for user: {} from: {} — page: {}, size: {}", userId, from, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Order> orderPage = orderRepository.searchByUserIdAndDateRange(userId, from, pageable);
+
+        PagedResponse<OrderResponse> response = toPagedResponse(orderPage);
+        log.info("Found {} orders for user: {} from date (page {}/{}) — took {} ms",
+                orderPage.getNumberOfElements(), userId, page, orderPage.getTotalPages(), System.currentTimeMillis() - start);
+        return response;
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private PagedResponse<OrderResponse> toPagedResponse(Page<Order> orderPage) {
+        List<OrderResponse> content = orderPage.getContent().stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+
+        return new PagedResponse<>(
+                content,
+                orderPage.getNumber(),
+                orderPage.getSize(),
+                orderPage.getTotalElements(),
+                orderPage.getTotalPages(),
+                orderPage.isLast()
+        );
     }
 
     private OrderResponse mapToResponse(Order order) {
