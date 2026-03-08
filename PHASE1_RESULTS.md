@@ -392,18 +392,16 @@ logging.level.com.zaxxer.hikari=DEBUG
 
 ---
 
-## What Comes Next (Phase 2 Optimizations)
+## What Comes Next — Progressive Optimization Roadmap
 
-After completing all Stage tests, we will fix these problems one at a time:
+Each phase fixes ONE problem. We measure the improvement against Phase 1 baselines before moving on.
 
-| Fix                              | Expected Impact                          |
-|----------------------------------|------------------------------------------|
-| Add index on user_id             | Seq Scan replaced by Index Scan          |
-| Add index on status              | Status filter uses index                 |
-| Add composite index (status + created_at) | Search query uses index      |
-| Add pagination (LIMIT/OFFSET)    | Reduce data transfer per request         |
-| Add Redis caching                | Eliminate repeated DB calls              |
-| Async order processing (Kafka)   | Reduce API latency for writes            |
+| Phase | Focus                  | What We Add                                      | Problem It Solves                    |
+|-------|------------------------|--------------------------------------------------|--------------------------------------|
+| **2** | **Index Optimization** | Indexes on user_id, status, created_at           | Full table scans (Seq Scan)          |
+| **3** | **Pagination**         | LIMIT/OFFSET on all list APIs                    | Massive result sets (GB of data)     |
+| **4** | **Caching (Redis)**    | Cache frequently accessed data                   | Repeated DB calls for same data      |
+| **5** | **Async (Kafka)**      | Queue-based order processing                     | Synchronous bottlenecks, write load  |
 
-Each optimization will be measured against these Phase 1 baseline numbers.
+**Rule:** Do NOT skip phases. Each optimization is measured independently so we understand its exact impact.
 
