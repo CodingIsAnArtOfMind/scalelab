@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -21,6 +22,20 @@ public class GlobalExceptionHandler {
         error.put("error", "Not Found");
         error.put("message", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
+    /**
+     * Phase 4 — handles queue-full rejection from async order processing.
+     * Returns 503 Service Unavailable (backpressure signal to client).
+     */
+    @ExceptionHandler(RejectedExecutionException.class)
+    public ResponseEntity<Map<String, Object>> handleQueueFull(RejectedExecutionException ex) {
+        Map<String, Object> error = new HashMap<>();
+        error.put("timestamp", LocalDateTime.now());
+        error.put("status", 503);
+        error.put("error", "Service Unavailable");
+        error.put("message", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
